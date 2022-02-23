@@ -1,0 +1,35 @@
+syntax = "proto3"; // defaults to proto2
+
+package gen;
+option go_package = "/gen";
+
+enum MessageType {
+  SIGN_IN_REQUEST = 0;
+  SIGN_UP_REQUEST = 1;
+  AUTHORIZATION_RESPONSE = 3;
+  JOIN_ROOM_REQUEST = 4;
+  SOUND_PACKET = 5;
+}
+
+message SignInRequest {
+  string token = 1;
+}
+
+message SignUpRequest {
+  string username = 1;
+}
+
+message AuthorizationResponse {
+  bool ok = 1;
+  uint32 user_id = 2;
+}
+
+message JoinRoomRequest {
+  string room_id = 1;
+}
+
+message SoundPacket {
+  bytes data = 1;
+  optional uint32 user_id = 2;
+}
+

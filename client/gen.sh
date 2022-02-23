@@ -1,0 +1,1 @@
+protoc --python_out=./gen -I=../proto ../proto/*
