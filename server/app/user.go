@@ -11,19 +11,19 @@ type User struct {
 
 type UserPool struct {
 	m        sync.Mutex
-	idToUser []User
+	idToUser []*User
 }
 
-func (userPool *UserPool) GetUser(id uint32) (User, bool) {
+func (userPool *UserPool) GetUser(id uint32) (*User, bool) {
 	userPool.m.Lock()
 	defer userPool.m.Unlock()
 	if id < 0 || id >= uint32(len(userPool.idToUser)) {
-		return User{}, false
+		return nil, false
 	}
 	return userPool.idToUser[id], true
 }
 
-func (userPool *UserPool) AddUser(user User) User {
+func (userPool *UserPool) AddUser(user *User) *User {
 	userPool.m.Lock()
 	defer userPool.m.Unlock()
 	user.Id = uint32(len(userPool.idToUser))

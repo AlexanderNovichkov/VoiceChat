@@ -10,6 +10,9 @@ MESSAGE_TYPE_TO_PB_CLASS = {
     messages_pb2.AUTHORIZATION_RESPONSE: messages_pb2.AuthorizationResponse,
     messages_pb2.JOIN_ROOM_REQUEST: messages_pb2.JoinRoomRequest,
     messages_pb2.SOUND_PACKET: messages_pb2.SoundPacket,
+    messages_pb2.CREATE_ROOM_REQUEST: messages_pb2.CreateRoomRequest,
+    messages_pb2.CREATE_ROOM_RESPONSE: messages_pb2.CreateRoomResponse,
+    messages_pb2.STATUS: messages_pb2.Status,
 }
 
 BP_CLASS_TO_MESSAGE_TYPE = {v: k for k, v in MESSAGE_TYPE_TO_PB_CLASS.items()}

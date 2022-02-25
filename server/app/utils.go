@@ -19,11 +19,7 @@ func forwardMessagesFromConnectionToChannel(c net.Conn, channel chan<- *protocol
 }
 
 func forwardMessagesFromChannelToConnection(channel <-chan *protocol.TransportMessage, c net.Conn) {
-	defer func() {
-		recover()
-	}()
-	for {
-		transportMessage := <-channel
+	for transportMessage := range channel {
 		if err := protocol.WriteTransportMessage(transportMessage, c); err != nil {
 			break
 		}

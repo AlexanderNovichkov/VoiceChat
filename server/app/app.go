@@ -6,11 +6,13 @@ import (
 	"net"
 	"server/gen"
 	"server/protocol"
+	"time"
 )
 
 type App struct {
 	users    UserPool
 	sessions SessionPool
+	rooms    roomPool
 }
 
 func (app *App) Run(port string) {
@@ -41,27 +43,25 @@ func (app *App) handle(c net.Conn) {
 	}
 
 	defer func() {
-		fmt.Println("Client disconnected")
 		if err := c.Close(); err != nil {
 			fmt.Println("c.Close() error:", err)
 		}
 		close(s.FromClient)
 		close(s.ToClient)
+		if s.roomInside != nil {
+			s.roomInside.RemoveUserFromBroadcast(s.User)
+		}
+		if err := recover(); err != nil {
+			fmt.Println("Recover from panic:", err)
+		}
+		fmt.Println("Client disconnected")
 	}()
 
-	finished := make(chan bool)
-	go func() {
-		forwardMessagesFromConnectionToChannel(s.c, s.FromClient)
-		finished <- true
-	}()
-	go func() {
-		forwardMessagesFromChannelToConnection(s.ToClient, s.c)
-		finished <- true
-	}()
+	go forwardMessagesFromConnectionToChannel(s.c, s.FromClient)
+	go forwardMessagesFromChannelToConnection(s.ToClient, s.c)
 
 	app.authorizeUser(s)
-
-	<-finished
+	app.handleSession(s)
 }
 
 func (app *App) authorizeUser(s *Session) {
@@ -75,9 +75,9 @@ func (app *App) authorizeUser(s *Session) {
 		panic("proto.Unmarshal error:" + err.Error())
 	}
 
-	s.User = app.users.AddUser(User{Name: signUpRequest.Username})
+	s.User = app.users.AddUser(&User{Name: signUpRequest.Username})
 
-	authorizationResponse := &gen.AuthorizationResponse{Ok: true, UserId: s.User.Id}
+	authorizationResponse := &gen.AuthorizationResponse{Ok: true, UserId: s.User.Id, Username: s.User.Name}
 	authorizationResponseTransportMessage, err := protocol.NewTransportMessageFromProtobuf(
 		gen.MessageType_AUTHORIZATION_RESPONSE, authorizationResponse,
 	)
@@ -88,15 +88,80 @@ func (app *App) authorizeUser(s *Session) {
 	fmt.Println("User authorized!", s.User)
 }
 
-func (app *App) handleMessagesFromUser(c net.Conn, user User) {
+func (app *App) handleSession(session *Session) {
 	for {
-		transportMessage, err := protocol.ReadTransportMessage(c)
-		if err != nil {
-			return
-		}
-		switch gen.MessageType(transportMessage.Type) {
-		case gen.MessageType_SOUND_PACKET:
-
+		select {
+		case transportMessage := <-session.FromClient:
+			app.handleMessageFromClient(session, transportMessage)
+		case <-time.NewTicker(time.Millisecond * 500).C:
+			app.SendStatusToUser(session)
 		}
 	}
+}
+
+func (app *App) handleMessageFromClient(session *Session, transportMessage *protocol.TransportMessage) {
+	switch gen.MessageType(transportMessage.Type) {
+	case gen.MessageType_CREATE_ROOM_REQUEST:
+		message := &gen.CreateRoomRequest{}
+		if err := proto.Unmarshal(transportMessage.Data, message); err != nil {
+			break
+		}
+		room := NewRoom()
+		app.rooms.CreateNewRoom(room)
+		responseMessage := gen.CreateRoomResponse{RoomId: room.Id}
+		responseTransportMessage, _ := protocol.NewTransportMessageFromProtobuf(
+			gen.MessageType_CREATE_ROOM_RESPONSE, &responseMessage,
+		)
+		session.ToClient <- &responseTransportMessage
+
+	case gen.MessageType_JOIN_ROOM_REQUEST:
+		message := &gen.JoinRoomRequest{}
+		if err := proto.Unmarshal(transportMessage.Data, message); err != nil {
+			break
+		}
+		room, ok := app.rooms.GetRoom(uint32(message.RoomId))
+		if !ok {
+			break
+		}
+		if session.roomInside != nil {
+			session.roomInside.RemoveUserFromBroadcast(session.User)
+			session.roomInside = nil
+		}
+		room.AddUserToBroadcast(session.User, session.ToClient)
+		session.roomInside = room
+
+	case gen.MessageType_SOUND_PACKET:
+		if session.roomInside != nil {
+			session.roomInside.GetInputChannel() <- transportMessage
+		}
+	}
+}
+
+func (app *App) SendStatusToUser(session *Session) {
+	status := gen.Status{
+		RoomIds: app.rooms.GetRoomsIds(),
+	}
+	roomInside := session.roomInside
+	if roomInside != nil {
+		roomInsidePbMessage := roomInside.ToProtobufMessage()
+		if has(roomInsidePbMessage.Users, session.User.Id) {
+			status.RoomInside = roomInsidePbMessage
+		}
+	}
+
+	transportMessage, err := protocol.NewTransportMessageFromProtobuf(gen.MessageType_STATUS, &status)
+	if err != nil {
+		panic(err)
+	}
+
+	session.ToClient <- &transportMessage
+}
+
+func has(users []*gen.User, userId uint32) bool {
+	for _, user := range users {
+		if user.Id == userId {
+			return true
+		}
+	}
+	return false
 }
