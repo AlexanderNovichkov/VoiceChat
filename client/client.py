@@ -19,6 +19,7 @@ CHUNK_SIZE = 1024
 AUDIO_FORMAT = 'int16'
 CHANNELS = 1
 RATE = 20000
+SPEAK_TIME_MS = 200
 
 
 @dataclasses.dataclass
@@ -82,7 +83,7 @@ class _MultiplePeopleVoicePlayer:
         with self._m:
             cur_time = time.time_ns() / 1_000_000
             for user_id, user_player_data in self._user_id_to_data.items():
-                if (cur_time - user_player_data.last_write_time_in_ms) <= CHUNK_SIZE / RATE * 1000 * 2:
+                if (cur_time - user_player_data.last_write_time_in_ms) <= SPEAK_TIME_MS:
                     users_ids.append(user_id)
         return users_ids
 
