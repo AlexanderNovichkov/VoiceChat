@@ -4,17 +4,17 @@ import (
 	"sync"
 )
 
-type User struct {
+type user struct {
 	Name string
 	Id   uint32
 }
 
-type UserPool struct {
+type userPool struct {
 	m        sync.Mutex
-	idToUser []*User
+	idToUser []*user
 }
 
-func (userPool *UserPool) GetUser(id uint32) (*User, bool) {
+func (userPool *userPool) getUser(id uint32) (*user, bool) {
 	userPool.m.Lock()
 	defer userPool.m.Unlock()
 	if id < 0 || id >= uint32(len(userPool.idToUser)) {
@@ -23,7 +23,7 @@ func (userPool *UserPool) GetUser(id uint32) (*User, bool) {
 	return userPool.idToUser[id], true
 }
 
-func (userPool *UserPool) AddUser(user *User) *User {
+func (userPool *userPool) addUser(user *user) *user {
 	userPool.m.Lock()
 	defer userPool.m.Unlock()
 	user.Id = uint32(len(userPool.idToUser))

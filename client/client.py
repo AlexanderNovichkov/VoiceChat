@@ -8,7 +8,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
-import pyaudio as pyaudio
+import sounddevice
 
 import protocol
 from gen import messages_pb2
@@ -16,7 +16,7 @@ from gen import messages_pb2
 logger = logging.getLogger(__name__)
 
 CHUNK_SIZE = 1024
-AUDIO_FORMAT = pyaudio.paInt16
+AUDIO_FORMAT = 'int16'
 CHANNELS = 1
 RATE = 20000
 
@@ -57,24 +57,23 @@ class Status:
         )
 
 
-class MultiplePeopleVoicePlayer:
+class _MultiplePeopleVoicePlayer:
     @dataclasses.dataclass
-    class UserPlayerData:
+    class _UserPlayerData:
         thread: threading.Thread
         queue: queue.Queue
         last_write_time_in_ms: float
 
-    def __init__(self, p: pyaudio.PyAudio):
-        self._p = p
+    def __init__(self):
         self._m = threading.Lock()
-        self._user_id_to_data: dict[int, MultiplePeopleVoicePlayer.UserPlayerData] = dict()
+        self._user_id_to_data: dict[int, _MultiplePeopleVoicePlayer._UserPlayerData] = dict()
 
     def write_user_data(self, user_id: int, data: bytes):
         with self._m:
             if user_id not in self._user_id_to_data:
-                user_player_data = MultiplePeopleVoicePlayer.UserPlayerData(None, queue.Queue(), 0)
-                user_player_data.t = threading.Thread(target=self._play_user_voice, args=(user_player_data,))
-                user_player_data.t.start()
+                user_player_data = _MultiplePeopleVoicePlayer._UserPlayerData(None, queue.Queue(), 0)
+                user_player_data.thread = threading.Thread(target=self._play_user_voice, args=(user_player_data,))
+                user_player_data.thread.start()
                 self._user_id_to_data[user_id] = user_player_data
             self._user_id_to_data[user_id].queue.put(data)
 
@@ -83,23 +82,9 @@ class MultiplePeopleVoicePlayer:
         with self._m:
             cur_time = time.time_ns() / 1_000_000
             for user_id, user_player_data in self._user_id_to_data.items():
-                if (cur_time - user_player_data.last_write_time_in_ms) < CHUNK_SIZE / RATE * 1000 * 2:
+                if (cur_time - user_player_data.last_write_time_in_ms) <= CHUNK_SIZE / RATE * 1000 * 2:
                     users_ids.append(user_id)
         return users_ids
-
-    def _play_user_voice(self, user_player_data: UserPlayerData):
-        playing_stream = self._p.open(format=AUDIO_FORMAT, channels=CHANNELS, rate=RATE, output=True,
-                                      frames_per_buffer=CHUNK_SIZE)
-        try:
-            while True:
-                voice_data = user_player_data.queue.get()
-                if voice_data is None:
-                    break
-                user_player_data.last_write_time_in_ms = time.time_ns() / 1_000_000
-                playing_stream.write(voice_data)
-        finally:
-            playing_stream.stop_stream()
-            playing_stream.close()
 
     def close(self):
         with self._m:
@@ -107,6 +92,17 @@ class MultiplePeopleVoicePlayer:
                 user_player_data.queue.put(None)
             for user_player_data in self._user_id_to_data.values():
                 user_player_data.thread.join()
+        logger.debug("Player closed")
+
+    def _play_user_voice(self, user_player_data: _UserPlayerData):
+        with sounddevice.RawOutputStream(samplerate=RATE, blocksize=CHUNK_SIZE, dtype=AUDIO_FORMAT,
+                                         channels=CHANNELS) as playing_stream:
+            while True:
+                voice_data = user_player_data.queue.get()
+                if voice_data is None:
+                    break
+                user_player_data.last_write_time_in_ms = time.time_ns() / 1_000_000
+                playing_stream.write(voice_data)
 
 
 class Client:
@@ -118,7 +114,7 @@ class Client:
         self.server_port = server_port
 
         self._status: Optional[messages_pb2.Status] = None
-        self._player: Optional[MultiplePeopleVoicePlayer] = None
+        self._player: Optional[_MultiplePeopleVoicePlayer] = None
         self._close = False
         self._is_muted = False
 
@@ -139,11 +135,9 @@ class Client:
             self.user_id: int = auth_response.user_id
             self.username: str = auth_response.username
 
-            self._p: pyaudio.PyAudio = pyaudio.PyAudio()
-
             self._executor = ThreadPoolExecutor(5)
-            self._executor.submit(self.send_voice_record_to_server)
-            self._executor.submit(self.receive_server_data)
+            self._executor.submit(self._send_voice_record_to_server)
+            self._executor.submit(self._receive_server_data)
         except Exception:
             self.close()
             raise
@@ -162,13 +156,6 @@ class Client:
     def unmute(self):
         self._is_muted = False
 
-    def close(self):
-        self._close = True
-        self._s.close()
-        self._executor.shutdown(wait=True, cancel_futures=True)
-        self._p.terminate()
-        logger.debug(f'Closed, username: {self.username}')
-
     def join_room(self, room_id: int):
         message = messages_pb2.JoinRoomRequest(room_id=room_id)
         self._submit_message_using_thread_pool(message)
@@ -181,22 +168,29 @@ class Client:
         message = messages_pb2.CreateRoomRequest()
         self._submit_message_using_thread_pool(message)
 
-    def send_voice_record_to_server(self):
-        recording_stream = self._p.open(format=AUDIO_FORMAT, channels=CHANNELS, rate=RATE, input=True,
-                                        frames_per_buffer=CHUNK_SIZE)
-        try:
-            while not self._close:
-                data = recording_stream.read(CHUNK_SIZE, exception_on_overflow=False)
-                if not self._is_muted:
-                    message = messages_pb2.SoundPacket(user_id=self.user_id, data=data)
-                    protocol.write_protobuf_message(message, self._f)
-        finally:
-            logger.debug('send_voice_record_to_server - exit')
-            recording_stream.close()
-            self._s.close()
+    def close(self):
+        self._close = True
+        self._f.close()
+        self._s.close()
+        self._executor.shutdown(wait=True, cancel_futures=True)
+        logger.debug(f'Closed, username: {self.username}')
 
-    def receive_server_data(self):
-        self._player = MultiplePeopleVoicePlayer(self._p)
+    def _send_voice_record_to_server(self):
+        with sounddevice.RawInputStream(samplerate=RATE, blocksize=CHUNK_SIZE, dtype=AUDIO_FORMAT,
+                                        channels=CHANNELS) as recording_stream:
+            try:
+                while not self._close:
+                    data, _ = recording_stream.read(CHUNK_SIZE)
+                    data = bytes(data)
+                    if not self._is_muted:
+                        message = messages_pb2.SoundPacket(user_id=self.user_id, data=data)
+                        protocol.write_protobuf_message(message, self._f)
+            finally:
+                self._f.close()
+                logger.debug('send_voice_record_to_server - exited')
+
+    def _receive_server_data(self):
+        self._player = _MultiplePeopleVoicePlayer()
         try:
             while not self._close:
                 message = protocol.read_protobuf_message(self._f)
@@ -205,9 +199,10 @@ class Client:
                 elif type(message) == messages_pb2.SoundPacket:
                     self._player.write_user_data(message.user_id, message.data)
         finally:
-            logger.debug(' receive_server_data - exit')
+            logger.debug(' receive_server_data - exit start')
             self._player.close()
-            self._s.close()
+            self._f.close()
+            logger.debug(' receive_server_data - exit done')
 
     def _submit_message_using_thread_pool(self, message):
         def submit_message():
