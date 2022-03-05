@@ -89,12 +89,15 @@ func (app *App) authorizeUser(s *Session) {
 }
 
 func (app *App) handleSession(session *Session) {
-	for {
+	ticker := time.NewTicker(time.Millisecond * 500)
+	for i := 1; ; i++ {
 		select {
-		case transportMessage := <-session.FromClient:
-			app.handleMessageFromClient(session, transportMessage)
-		case <-time.NewTicker(time.Millisecond * 500).C:
+		case <-ticker.C:
+			fmt.Println("SendStatus", i)
 			app.SendStatusToUser(session)
+		case transportMessage := <-session.FromClient:
+			fmt.Println("handleMessageFromClient", i)
+			app.handleMessageFromClient(session, transportMessage)
 		}
 	}
 }
@@ -130,6 +133,16 @@ func (app *App) handleMessageFromClient(session *Session, transportMessage *prot
 		room.AddUserToBroadcast(session.User, session.ToClient)
 		session.roomInside = room
 
+	case gen.MessageType_LEAVE_ROOM_REQUEST:
+		message := &gen.LeaveRoomRequest{}
+		if err := proto.Unmarshal(transportMessage.Data, message); err != nil {
+			break
+		}
+		if session.roomInside != nil {
+			session.roomInside.RemoveUserFromBroadcast(session.User)
+			session.roomInside = nil
+		}
+
 	case gen.MessageType_SOUND_PACKET:
 		if session.roomInside != nil {
 			session.roomInside.GetInputChannel() <- transportMessage
@@ -139,14 +152,13 @@ func (app *App) handleMessageFromClient(session *Session, transportMessage *prot
 
 func (app *App) SendStatusToUser(session *Session) {
 	status := gen.Status{
-		RoomIds: app.rooms.GetRoomsIds(),
+		RoomsIds: app.rooms.GetRoomsIds(),
+		IsInRoom: false,
+		Room:     nil,
 	}
-	roomInside := session.roomInside
-	if roomInside != nil {
-		roomInsidePbMessage := roomInside.ToProtobufMessage()
-		if has(roomInsidePbMessage.Users, session.User.Id) {
-			status.RoomInside = roomInsidePbMessage
-		}
+	if session.roomInside != nil {
+		status.IsInRoom = true
+		status.Room = session.roomInside.ToProtobufMessage()
 	}
 
 	transportMessage, err := protocol.NewTransportMessageFromProtobuf(gen.MessageType_STATUS, &status)

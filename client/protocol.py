@@ -9,6 +9,7 @@ MESSAGE_TYPE_TO_PB_CLASS = {
     messages_pb2.SIGN_UP_REQUEST: messages_pb2.SignUpRequest,
     messages_pb2.AUTHORIZATION_RESPONSE: messages_pb2.AuthorizationResponse,
     messages_pb2.JOIN_ROOM_REQUEST: messages_pb2.JoinRoomRequest,
+    messages_pb2.LEAVE_ROOM_REQUEST: messages_pb2.LeaveRoomRequest,
     messages_pb2.SOUND_PACKET: messages_pb2.SoundPacket,
     messages_pb2.CREATE_ROOM_REQUEST: messages_pb2.CreateRoomRequest,
     messages_pb2.CREATE_ROOM_RESPONSE: messages_pb2.CreateRoomResponse,

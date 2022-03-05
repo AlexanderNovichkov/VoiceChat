@@ -8,10 +8,11 @@ enum MessageType {
   SIGN_UP_REQUEST = 1;
   AUTHORIZATION_RESPONSE = 3;
   JOIN_ROOM_REQUEST = 4;
-  SOUND_PACKET = 5;
-  CREATE_ROOM_REQUEST = 6;
-  CREATE_ROOM_RESPONSE = 7;
-  STATUS = 8;
+  LEAVE_ROOM_REQUEST = 5;
+  SOUND_PACKET = 6;
+  CREATE_ROOM_REQUEST = 7;
+  CREATE_ROOM_RESPONSE = 8;
+  STATUS = 9;
 }
 
 message SignInRequest {
@@ -32,9 +33,13 @@ message JoinRoomRequest {
   uint32 room_id = 1;
 }
 
+message LeaveRoomRequest {
+
+}
+
 message SoundPacket {
   bytes data = 1;
-  optional uint32 user_id = 2;
+  uint32 user_id = 2;
 }
 
 message CreateRoomRequest {
@@ -56,6 +61,7 @@ message Room {
 }
 
 message Status {
-  repeated uint32 room_ids = 1;
-  optional Room room_inside = 2;
+  repeated uint32 rooms_ids = 1;
+  bool is_in_room = 2;
+  optional Room room = 3;
 }
